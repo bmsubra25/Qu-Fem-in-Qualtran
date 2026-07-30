@@ -10,3 +10,4 @@ This project includes quantum mesh connectivity, finite-element matrix assembly,
 - [Quantum Singular Value Transformation and Beyond](https://arxiv.org/abs/1806.01838)
 - [Quantum Algorithm for Linear Systems of Equations](https://arxiv.org/abs/0811.3171)
 - [PennyLane: QSVT in Practice](https://pennylane.ai/demos/tutorial_qsvt_hardware)
+- [PYQSP](https://github.com/ichuang/pyqsp)
