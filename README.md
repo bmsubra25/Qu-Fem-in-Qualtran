@@ -11,3 +11,6 @@ This project includes quantum mesh connectivity, finite-element matrix assembly,
 - [Quantum Algorithm for Linear Systems of Equations](https://arxiv.org/abs/0811.3171)
 - [PennyLane: QSVT in Practice](https://pennylane.ai/demos/tutorial_qsvt_hardware)
 - [PYQSP](https://github.com/ichuang/pyqsp)
+- [Fast inversion, preconditioned quantum linear system
+solvers, fast Green's-function computation, and fast
+evaluation of matrix functions](https://link.aps.org/accepted/10.1103/PhysRevA.104.032422#page=8)
