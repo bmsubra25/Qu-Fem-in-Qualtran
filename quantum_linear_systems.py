@@ -251,6 +251,33 @@ def qlsp_solver(n, A, b, bb):
   bb.add(IntEffect(0, f_A.resource_bitsize), val = resource)
   circuit = bb.finalize(system = system)
   return circuit
+    
+def qlsp_solver_prepared(n, A, b, bb):
+  # prepares QSVT
+  f_A = return_qsvt(A) # P(A) + iQ(A)
+  f_A_Poly_Adj = return_qsvt_op(A)# P(A)-iQ(A)
+  # hadamard trick for performing an LCU of these
+  f_A_controlled = f_A.controlled(CtrlSpec())
+  f_A_Poly_Adj= f_A_Poly_Adj.controlled(CtrlSpec())
+  # Takes the adjoint operation to get BE(A^-1) with extra ancillas
+  # Allocates registers for the LCU
+  ctrl = bb.allocate(1)
+  ancilla = bb.allocate(f_A.ancilla_bitsize)
+  resource = bb.allocate(f_A.resource_bitsize)
+  f_a_c_inv = f_A_controlled.adjoint()
+  f_a_c_adj_inv = f_A_Poly_Adj.adjoint()
+  # performs operation
+  ctrl = bb.add(Hadamard(),q = ctrl)
+  ctrl, system, ancilla, resource = bb.add(f_a_c_inv,ctrl = ctrl, system = system, ancilla = ancilla, resource = resource)
+  ctrl = bb.add(XGate(), q = ctrl)
+  ctrl, system, ancilla, resource = bb.add(f_a_c_adj_inv,ctrl = ctrl, system = system, ancilla = ancilla, resource = resource)
+  ctrl = bb.add(Hadamard(),q = ctrl)
+  # Postselects registers
+  bb.add(IntEffect(0, 1), val = ctrl)
+  bb.add(IntEffect(0, f_A.ancilla_bitsize), val = ancilla)
+  bb.add(IntEffect(0, f_A.resource_bitsize), val = resource)
+  circuit = bb.finalize(system = system)
+  return circuit
 
 """Testing
 
