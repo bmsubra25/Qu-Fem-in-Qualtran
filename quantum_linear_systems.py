@@ -10,7 +10,6 @@ Installation
 """
 
 """Solves BE(A) @ |v>|0> = b for A< v, b, preparing a quantum state |v> that is proportional to the solution"""
-pip install pennylane cirq qualtran
 
 """Imports"""
 
