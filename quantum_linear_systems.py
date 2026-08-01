@@ -13,7 +13,6 @@ Installation
 
 """Imports"""
 
-!git clone https://github.com/ichuang/pyqsp
 import sys
 sys.path.insert(0, './pyqsp')
 from qualtran.bloqs.basic_gates import TGate
