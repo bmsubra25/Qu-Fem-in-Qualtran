@@ -14,3 +14,5 @@ This project includes quantum mesh connectivity, finite-element matrix assembly,
 - [Fast inversion, preconditioned quantum linear system
 solvers, fast Green's-function computation, and fast
 evaluation of matrix functions](https://link.aps.org/accepted/10.1103/PhysRevA.104.032422#page=8)
+- [A Quantum Algorithm for Functions of Multiple
+Commuting Hermitian Matrices](https://arxiv.org/pdf/2302.11139)
