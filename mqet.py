@@ -73,7 +73,7 @@ def infinity_norm(p, range):
 def MQET(commuting_operators, D, r, g, vars):
   u_s_a_list = []
   B = []
-  for s in product(range(D),repeat = r):
+  for s in product(range(D),repeat = r-1):
     p_s = []
     div_functions = []
     for s_k in s:
