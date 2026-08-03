@@ -8,11 +8,6 @@ Original file is located at
 
 Installation
 """
-
-!git clone https://github.com/ichuang/pyqsp
-!pip install pennylane cirq
-!pip install -U qualtran
-
 """Imports"""
 
 from numpy.polynomial import Chebyshev
