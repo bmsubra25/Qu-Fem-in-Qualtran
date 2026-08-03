@@ -92,7 +92,7 @@ def MQET(commuting_operators, D, r, g, vars):
     B.append(B_s)
     # Q_s block encoding
     encodings = []
-    if np.isclose(complex(infinity_norm(q_s, [-1,1]), 0)):
+    if np.isclose(complex(infinity_norm(q_s, [-1,1])),0):
         continue
     q_s_hat = q_s/infinity_norm(q_s, [-1,1])
     q_s_hat_bes = []
