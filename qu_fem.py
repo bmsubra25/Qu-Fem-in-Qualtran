@@ -18,7 +18,8 @@ from itertools import product
 import math
 import random
 from typing import *
-
+import qu_fem_in_qualtran
+from qu_fem_in_qualtran.mqet import MQET
 import cirq
 import numpy as np
 import pennylane as qml
@@ -84,6 +85,7 @@ from qualtran.drawing import (
     show_call_graph,
     show_counts_sigma,
 )
+import sympy as sp
 
 """Position Operators/Q"""
 
@@ -121,6 +123,24 @@ class x_i(Bloq):
     registers.append(Register("ancilla", QAny(self.x.ancilla_bitsize) ))
     registers.append(Register("resource", QAny(self.x.resource_bitsize)))
     return Signature(registers)
+  @property
+  def alpha(self):
+    return self.x.alpha
+  @property
+  def ancilla_bitsize(self):
+    return self.x.ancilla_bitsize
+  @property
+  def epsilon(self):
+    return self.x.epsilon
+  @property
+  def resource_bitsize(self):
+    return self.x.resource_bitsize
+  @property
+  def signal_state(self):
+    return self.x.signal_state
+  @property
+  def system_bitsize(self):
+    return self.n*self.d
   def build_composite_bloq(self, bb, *,system, ancilla, resource):
     coords = bb.split(system)
     coord = bb.join(coords[(self.d-self.i-1)*self.n: (self.d-self.i)*self.n])
@@ -300,9 +320,19 @@ o_3 = x_i(d,n,2)
 system = bb.allocate(d*n)
 system_split = bb.split(system)
 system_split[0] = bb.add(XGate(), q = system_split[0])
+system_split[3] = bb.add(XGate(), q = system_split[3])
+system = bb.join(system_split)
 symbols_str = ""
 for i in range(3):
   symbols_str = symbols_str + f"x_{i} "
 vars = sympy.symbols(symbols_str)
-func = sp.Poly(x_1*x_2*x_3)
+func = sp.Poly(vars[0]*vars[1]+vars[2])
+operator = MQET([o_1,o_2,o_3],4,2, func, vars)
+ancilla = bb.allocate(operator.ancilla_bitsize)
+resource = bb.allocate(operator.resource_bitsize)
+system, ancilla, resource = bb.add(operator, system = system, ancilla = ancilla, resource = resource)
+bb.add(IntEffect(0, operator.ancilla_bitsize), val = ancilla)
+bb.add(IntEffect(0, operator.resource_bitsize), val = resource)
+out = bb.finalize(system = system)
+print(out.tensor_contract())
 """
