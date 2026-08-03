@@ -9,10 +9,6 @@ Original file is located at
 Installation
 """
 
-!git clone https://github.com/ichuang/pyqsp
-!pip install pennylane cirq
-!pip install -U qualtran
-
 """Imports"""
 
 from numpy.polynomial import Chebyshev
@@ -27,6 +23,7 @@ from qualtran import *
 from qualtran.bloqs import *
 import math
 import numpy as np
+from qualtran.bloqs.block_encoding import ChebyshevPolynomial
 from qualtran import Bloq, BloqBuilder, QUInt, QAny
 from qualtran.bloqs.data_loading.qrom import QROM
 from qualtran.bloqs.arithmetic.permutation import Permutation
@@ -70,7 +67,7 @@ def generate_q_s(r, g, s, prod, variables):
 
 def infinity_norm(p, range):
   roots = p.deriv().roots()
-  return max([abs(p(root)) for root in roots if range[0] <= root and root <= range[1]] + [abs(p(range[0]))]+[abs(p(range[1]))])
+  return max([sp.abs(p(root)) for root in roots if range[0] <= root and root <= range[1]] + [sp.abs(p(range[0]))]+[sp.abs(p(range[1]))])
 
 """Core MQET"""
 
@@ -88,33 +85,40 @@ def MQET(commuting_operators, D, r, g):
     div_functions = []
     for s_k in s:
       p_s.append(Chebyshev.basis(s_k))
-    integrand_functions = [g]+[sp.chebyshevt(s[i],vars[i])/(sp.Poly(sp.sqrt(1-vars[i]**2), vars[i])) for i in range(r)]
+    integrand_functions = [g]+[sp.chebyshevt(s[i],vars[i])/sp.sqrt(1-vars[i]**2) for i in range(r)]
     prod = 1
     for func in integrand_functions:
       prod = prod * func
     q_s = sp.Poly(generate_q_s(r,g,s,prod, vars),vars[-1])
     coeffs = np.array(q_s.all_coeffs(),dtype = complex)[::-1]
-    q_s = Polynomial(coeffs)
+    q_s = Polynomial(coeffs).convert(kind = Chebyshev)
     # Make B_s
     B_s = infinity_norm(q_s, [-1,1])
     for k in range(len(p_s)):
       B_s = B_s * infinity_norm(p_s[k], [-1,1])
     B.append(B_s)
-    # Hats
-    p_s_hats = []
-    for k in range(len(p_s)):
-      p_s_hats.append(p_s[k]/infinity_norm(p_s[k], [-1,1]))
+    # Q_s block encoding
+    encodings = []
     q_s_hat = q_s/infinity_norm(q_s, [-1,1])
-    # Creates q_s_hat block encoding
-    q_s_hat_be = GeneralizedQSP.from_qsp_polynomial(commuting_operators[r],tuple(q_s_hat.coef))
-    # Creates block encodings
-    p_block_encodings = []
-    for k in range(len(p_s_hats)):
-      standard_poly = cheb2poly(p_s_hats[k].coef)
-      p_block_encodings.append(GeneralizedQSP.from_qsp_polynomial(commuting_operators[k], tuple(standard_poly)))
-    # Create U_(s,a)
-    combined_list = p_block_encodings[::-1]+[q_s_hat_be]
-    u_s_a_list.append(Product(tuple(combined_list)))
+    q_s_hat_bes = []
+    q_s_hat_coefficients = []
+    for i in range(len(q_s_hat.coef)):
+      if q_s_hat.coef[i] != 0:
+        q_s_hat_bes.append(ChebyshevPolynomial(commuting_operators[r], order=i))
+        q_s_hat_coefficients.append(q_s_hat.coef[i])
+    encodings.append(LinearCombination(block_encodings = tuple(q_s_hat_bes),lambd = tuple(q_s_hat_coefficients), lambd_bits = 3))
+    # P_s_k_hat operators
+    for k in range(len(s)):
+      encodings.append(ChebyshevPolynomial(commuting_operators[k], order=s[k]))
+    u_s_a_list.append(Product(tuple(encodings[::-1])))
   return LinearCombination(block_encodings = tuple(u_s_a_list), lambd = tuple(B), lambd_bits = 3)
 
-"""testing"""
+"""testing
+
+x = sp.symbols("x")
+q_s = sp.Poly(5*x,x)
+coeffs = np.array(q_s.all_coeffs(),dtype = complex)[::-1]
+q_s = Polynomial(coeffs).convert(kind = Chebyshev)
+print(infinity_norm(q_s,range = [-1,1]))
+print(q_s.coef[1])
+"""
