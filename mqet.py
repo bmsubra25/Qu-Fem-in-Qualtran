@@ -119,4 +119,5 @@ coeffs = np.array(q_s.all_coeffs(),dtype = complex)[::-1]
 q_s = Polynomial(coeffs).convert(kind = Chebyshev)
 print(infinity_norm(q_s,range = [-1,1]))
 print(q_s.coef[1])
+# implementing tests
 """
