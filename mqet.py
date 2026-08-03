@@ -9,6 +9,10 @@ Original file is located at
 Installation
 """
 
+!git clone https://github.com/ichuang/pyqsp
+!pip install pennylane cirq
+!pip install -U qualtran
+
 """Imports"""
 
 from numpy.polynomial import Chebyshev
@@ -72,14 +76,9 @@ def infinity_norm(p, range):
 """Core MQET"""
 
 # Assues g is a sympy polynomial
-def MQET(commuting_operators, D, r, g):
+def MQET(commuting_operators, D, r, g, vars):
   u_s_a_list = []
   B = []
-  # Creates symbols for use
-  symbols_str = ""
-  for i in range(r+1):
-    symbols_str = symbols_str + f"x_{i} "
-  vars = sympy.symbols(symbols_str)
   for s in product(range(D),repeat = r):
     p_s = []
     div_functions = []
