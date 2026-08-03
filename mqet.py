@@ -108,7 +108,7 @@ def MQET(commuting_operators, D, r, g, vars):
     # P_s_k_hat operators
     for k in range(len(s)):
       encodings.append(ChebyshevPolynomial(commuting_operators[k], order=s[k]))
-    u_s_a_list.append(Product(tuple(encodings[::-1])))
+    u_s_a_list.append(BlockEncodingProduct(tuple(encodings[::-1])))
   return LinearCombination(block_encodings = tuple(u_s_a_list), lambd = tuple(B), lambd_bits = 3)
 
 """testing
