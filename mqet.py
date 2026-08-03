@@ -44,7 +44,6 @@ from qualtran.bloqs.state_preparation.black_box_prepare import BlackBoxPrepare
 from qualtran import cirq_interop
 from qualtran.bloqs.block_encoding import TensorProduct
 import qualtran.simulation as sim
-!pip show qualtran
 from qualtran.bloqs.qsp.generalized_qsp import GeneralizedQSP
 from itertools import product
 from numpy.polynomial import Chebyshev
@@ -66,7 +65,7 @@ def generate_q_s(r, g, s, prod, variables):
 
 def infinity_norm(p, range):
   roots = p.deriv().roots()
-  return max([sp.abs(p(root)) for root in roots if range[0] <= root and root <= range[1]] + [sp.abs(p(range[0]))]+[sp.abs(p(range[1]))])
+  return max([sp.Abs(p(root)) for root in roots if range[0] <= root and root <= range[1]] + [sp.Abs(p(range[0]))]+[sp.Abs(p(range[1]))])
 
 """Core MQET"""
 
