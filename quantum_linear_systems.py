@@ -213,11 +213,11 @@ def return_qsvt_op(M):
 
 """QLSP Solver"""
 
-def prep_vector(bb,b, values):
+def prep_vector(bb,b, phases):
     phase_bitsize = 5
     prepare_b = StatePreparationViaRotations(phase_bitsize = phase_bitsize, state_coefficients = tuple(b))
     phase_gradient = bb.add(PhaseGradientState(phase_bitsize))
-    state, phase_gradient = bb.add(prepare_b, target_state = values, phase_gradient = phase_gradient)
+    state, phase_gradient = bb.add(prepare_b, target_state = phases, phase_gradient = phase_gradient)
     bb.add(PhaseGradientState(bitsize=phase_bitsize).adjoint(), phase_grad=phase_gradient)
     return state
 # Assumes A and b are padded to a power of 2
