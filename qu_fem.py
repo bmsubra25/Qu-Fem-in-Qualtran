@@ -20,6 +20,8 @@ import random
 from typing import *
 import qu_fem_in_qualtran
 from qu_fem_in_qualtran.mqet import MQET
+from qu_fem_in_qualtran.quantum_linear_systems import qlsp_solver_prepared
+from qu_fem_in_qualtran.quantum_linear_systems import prep_vector
 import cirq
 import numpy as np
 import pennylane as qml
@@ -307,32 +309,61 @@ class a_jk_block_encoding(BlockEncoding):
     system, ancilla = bb.add(self.a_jk, system = system, ancilla = ancilla,)
     return {"system": system, "ancilla": ancilla}
 
-"""Testing
+"""Boundary Conditions Operators"""
 
-bb = BloqBuilder()
-d = 3
-N = 4
-n = int(math.log(N,2))
-x = build_x(n)
-o_1 = x_i(d,n,0)
-o_2 = x_i(d,n,1)
-o_3 = x_i(d,n,2)
-system = bb.allocate(d*n)
-system_split = bb.split(system)
-system_split[0] = bb.add(XGate(), q = system_split[0])
-system_split[3] = bb.add(XGate(), q = system_split[3])
-system = bb.join(system_split)
-symbols_str = ""
-for i in range(3):
-  symbols_str = symbols_str + f"x_{i} "
-vars = sympy.symbols(symbols_str)
-func = sp.Poly(vars[0]*vars[1]+vars[2])
-operator = MQET([o_1,o_2,o_3],4,2, func, vars)
-ancilla = bb.allocate(operator.ancilla_bitsize)
-resource = bb.allocate(operator.resource_bitsize)
-system, ancilla, resource = bb.add(operator, system = system, ancilla = ancilla, resource = resource)
-bb.add(IntEffect(0, operator.ancilla_bitsize), val = ancilla)
-bb.add(IntEffect(0, operator.resource_bitsize), val = resource)
-out = bb.finalize(system = system)
-print(out.tensor_contract())
-"""
+class u_b(BlockEncoding):
+  def __init__(self, numnp_bits, marker_table):
+    self.numnp_bits = numnp_bits
+    self.table = QROM([np.array(marker_table)],(numnp_bits,),(1,))
+  @property
+  def signature(self):
+    return Signature([Register("system",QAny(self.numnp_bits)),Register("ancilla",QBit())])
+  @property
+  def alpha(self):
+    return 1
+  @property
+  def ancilla_bitsize(self):
+    return 1
+  @property
+  def epsilon(self):
+    return 0
+  @property
+  def resource_bitsize(self):
+    return 0
+  @property
+  def signal_state(self):
+    return BlackBoxPrepare(prepare = PrepareIdentity.from_bitsizes([1]))
+  @property
+  def system_bitsize(self):
+    return self.numnp_bits
+  def build_composite_bloq(self,bb, *, system, ancilla):
+    system, ancilla = bb.add(self.table, selection = system, target0_ = ancilla)
+    return {"system": system, "ancilla": ancilla}
+"""def enforce_boundary_conditions(bb, L, u, b, u_hat_unprepared, marker_table, numnp_bits):
+  # Creating matrices for multiplictation
+  operand_1 = BlockEncodingProduct(tuple([u_b(numnp_bits,marker_table),L,u_b(numnp_bits,marker_table)]))
+  operand_2 = LinearCombination(block_encodings = (Identity(numnp_bits),u_b(numnp_bits,marker_table)),lambd = (1.0,-1.0),lambd_bits = 1)
+  L_dirich = LinearCombination(block_encodings = (operand_1,operand_2),lambd = (1.0,1.0),lambd_bits = 1)
+  operand_3 = LinearCombination(block_encodings = (L, Identity(numnp_bits)),lambd = (1.0,-1.0),lambd_bits = 1)
+  operand_4 = LinearCombination(block_encodings = (Identity(numnp_bits),u_b(numnp_bits,marker_table)),lambd = (1.0,-1.0),lambd_bits = 1)
+  operand_5 = BlockEncodingProduct(tuple([operand_3, operand_4]))
+  p_int_be = u_b(numnp_bits,marker_table)
+  # preparing vectors and ancillas
+  u_hat = prep_vector(bb, u_hat_unprepared, bb.allocate(int(math.log(len(u_hat_unprepared),2))))
+  ancilla_u_hat = bb.allocate(operand_5.ancilla_bitsize)
+  resource_u_hat = bb.allocate(operand_5.ancilla_bitsize)
+  ancilla_u = bb.allocate(p_int_be.ancilla_bitsize)
+  resource_u = bb.allocate(p_int_be.resource_bitsize)
+  # Performing operations to produce right hand side(hadamard trick subtraction)
+  ctrl = bb.allocate(1)
+  p_int_be_controlled = p_int_be.controlled(CtrlSpec())
+  right_matrix_controlled = operand_5.controlled(CtrlSpec())
+  ctrl = bb.add(Hadamard(),q = ctrl)
+  ctrl = bb.add(ZGate(), q = ctrl)
+  ctrl, u, ancilla_u, resource_u = bb.add(p_int_be, ctrl = ctrl, system = u, ancilla = ancilla_u, resource = resource_u)
+  ctrl = bb.add(XGate(), q = ctrl)
+  ctrl, u_hat, ancilla_u_hat, resource_u_hat = bb.add(right_matrix_controlled, ctrl = ctrl, system = u_hat, ancilla = ancilla_u_hat, resource = resource_u_hat)
+  ctrl = bb.add(Hadamard(),q = ctrl)
+  # Postselecting to get b_dirich"""
+
+"""Testing"""
