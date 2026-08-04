@@ -45,7 +45,7 @@ from qualtran import (
     Signature,
     cirq_interop,
 )
-
+from sympy import legendre
 from qualtran.bloqs import *
 from qualtran.bloqs.arithmetic import *
 from qualtran.bloqs.arithmetic.permutation import Permutation
@@ -73,6 +73,7 @@ from qualtran.bloqs.block_encoding import (
     TensorProduct,
     Unitary,
 )
+from sympy import *
 from qualtran.bloqs.data_loading.qrom import QROM
 from qualtran.bloqs.qsp.generalized_qsp import GeneralizedQSP
 from qualtran.bloqs.reflections.prepare_identity import PrepareIdentity
@@ -81,6 +82,7 @@ from qualtran.bloqs.state_preparation.black_box_prepare import BlackBoxPrepare
 from qualtran.bloqs.state_preparation.state_preparation_via_rotation import (
     StatePreparationViaRotations,
 )
+from itertools import combinations
 from qualtran.cirq_interop import CirqGateAsBloq
 from qualtran.drawing import (
     show_bloq,
@@ -276,7 +278,7 @@ class AdjointBlockEncoding(BlockEncoding):
   def build_composite_bloq(self, bb, system, ancilla):
     system, ancilla = bb.add(self.block_encoding.adjoint(),system = system, ancilla = ancilla)
     return {"system": system, "ancilla": ancilla}
-
+# May not use as the general form works anyway
 class a_jk_block_encoding(BlockEncoding):
   def __init__(self,nen,numel,numnp,nen_bits,numel_bits,numnp_bits,IX,j, k):
     a_j = a_j_block_encoding(nen,numel,numnp,nen_bits,numel_bits,numnp_bits,IX, j)
@@ -308,6 +310,119 @@ class a_jk_block_encoding(BlockEncoding):
   def build_composite_bloq(self,bb, *, system, ancilla):
     system, ancilla = bb.add(self.a_jk, system = system, ancilla = ancilla,)
     return {"system": system, "ancilla": ancilla}
+
+class log_numel_projector(BlockEncoding):
+  def __init__(self, numel, n_bits):
+    self.numel = numel
+    self.n_bits = n_bits
+  @property
+  def signature(self):
+    return Signature([Register("system", QUInt(self.n_bits)),Register("ancilla", QBit())])
+  @property
+  def alpha(self):
+    return 1
+  @property
+  def ancilla_bitsize(self):
+    return 1
+  @property
+  def epsilon(self):
+    return 0
+  @property
+  def resource_bitsize(self):
+    return 0
+  @property
+  def signal_state(self):
+    return BlackBoxPrepare(prepare = PrepareIdentity.from_bitsizes([1]))
+  @property
+  def system_bitsize(self):
+    return self.n_bits
+  def build_composite_bloq(self, bb, *, el, flag):
+    numel_reg = bb.allocate(dtype = QUInt(self.n_bits))
+    numel_reg_bits = bb.split(numel_reg)
+    for index in range(self.n_bits):
+      if (self.numel >> index) & 1:
+        numel_reg_bits[self.n_bits - index - 1] = bb.add(XGate(), q = numel_reg_bits[self.n_bits - index - 1])
+    numel_reg = bb.join(numel_reg_bits, dtype = QUInt(self.n_bits))
+    numel_reg, el , flag = bb.add(GreaterThan(a_bitsize = self.n_bits, b_bitsize = self.n_bits), a = numel_reg, b = el, target = flag)
+    numel_reg_bits = bb.split(numel_reg)
+    for index in range(self.n_bits):
+      if (self.numel >> index) & 1:
+        numel_reg_bits[self.n_bits - index - 1] = bb.add(XGate(), q = numel_reg_bits[self.n_bits - index - 1])
+    numel_reg = bb.join(numel_reg_bits)
+    bb.free(numel_reg)
+    return {"el": el, "flag": flag}
+
+"""Finite Element Array Assembly"""
+
+def generate_x_gl(x_l, numel, n_bits):
+  h = 1/numel
+  coeff_1 = h*(x_l+1)/2
+  coeff_2 = h*(2**n_bits-1)
+  inner = LinearCombination(block_encodings = (Identity(n_bits), build_x(n_bits)), lambd = (coeff_1,coeff_2),lambd_bits = 4)
+  return Product((log_numel_projector(numel, n_bits), inner))
+
+def generate_gauss_tuples(G, numel, el):
+  gauss_tuples = []
+  x = sp.symbols("x")
+  poly = legendre(G,x)
+  poly_deriv = diff(poly, x)
+  h = 1/numel
+  for x_k in poly.nroots():
+    w_k = 2 / (((1 - x_k**2))*(poly_deriv(x_k)**2))
+    x_k_el = h* (x_k + 1)/2 + h*el
+    w_k_el = (h/2)*w_k
+    gauss_tuples.append((w_k_el, x_k_el))
+  return gauss_tuples
+
+def generate_c_ljk_array(j,k, nodal_basis_map, gauss_tuples):
+  coeff_array = []
+  for i in range(len(gauss_tuples)):
+    weight, point = gauss_tuples[i]
+    coeff_array.append(weight * nodal_basis_map[j][k](point))
+  return coeff_array
+
+def assemble_fem_array(nodal_basis_map, G, nen, numel, numnp, IX, operators):
+  gauss_tuples = generate_gauss_tuples(G, numel, el = 0)
+  nen_bits = int(math.log(nen,2))
+  numel_bits = int(math.log(numel,2))
+  numnp_bits = int(math.log(numnp,2))
+  # list for storing bes
+  bes = []
+  for j,k in combinations(list(range(nen)),2):
+    a_j = a_j_block_encoding(nen, numel, numnp, nen_bits, numel_bits, numnp_bits ,IX, j)
+    a_k = a_j_block_encoding(nen, numel, numnp, nen_bits, numel_bits, numnp_bits ,IX, k)
+    lcu = LinearCombination(block_encodings = tuple(operators),lambd = tuple(generate_c_ljk_array(j,k,nodal_basis_map,gauss_tuples)), lambd_bits = 5)
+    bes.append(BlockEncodingProduct(a_j,lcu,AdjointBlockEncoding(a_k)))
+  coeffs = [1.0] * len(bes)
+  return LinearCombination(block_encodings = tuple(bes), lambd = tuple(coeffs), lambd_bits = 1)
+
+"""Force Vector Assembly"""
+
+def generate_c_lj_array(j, nodal_functions, gauss_tuples):
+  coeff_array = []
+  for i in range(len(gauss_tuples)):
+    weight, point = gauss_tuples[i]
+    coeff_array.append(weight * nodal_functions[j](point))
+  return coeff_array
+
+def generate_force_diag(nodal_functions, G, nen, numel, numnp, IX, operators):
+  gauss_tuples = generate_gauss_tuples(G, numel)
+  nen_bits = int(math.log(nen,2))
+  numel_bits = int(math.log(numel,2))
+  numnp_bits = int(math.log(numnp,2))
+  bes = []
+  for j in range(nen):
+    a_j = a_j_block_encoding(nen, numel, numnp, nen_bits, numel_bits, numnp_bits ,IX, j)
+    lcu = LinearCombination(block_encodings = tuple(operators),lambd = tuple(generate_c_lj_array(j,nodal_functions,gauss_tuples)), lambd_bits = 5)
+    bes.append(BlockEncodingProduct(a_j,lcu,AdjointBlockEncoding(a_j)))
+  coeffs = [1.0] * len(bes)
+  return LinearCombination(block_encodings = tuple(bes), lambd = tuple(coeffs), lambd_bits = 1)
+
+def prep_f(nodal_functions, G, nen, numel, numnp, IX):
+
+
+
+  return None
 
 """Boundary Conditions Operators"""
 
@@ -349,21 +464,39 @@ class u_b(BlockEncoding):
   operand_5 = BlockEncodingProduct(tuple([operand_3, operand_4]))
   p_int_be = u_b(numnp_bits,marker_table)
   # preparing vectors and ancillas
-  u_hat = prep_vector(bb, u_hat_unprepared, bb.allocate(int(math.log(len(u_hat_unprepared),2))))
   ancilla_u_hat = bb.allocate(operand_5.ancilla_bitsize)
-  resource_u_hat = bb.allocate(operand_5.ancilla_bitsize)
-  ancilla_u = bb.allocate(p_int_be.ancilla_bitsize)
-  resource_u = bb.allocate(p_int_be.resource_bitsize)
+  resource_u_hat = bb.allocate(operand_5.resource_bitsize)
+  ancilla_b = bb.allocate(p_int_be.ancilla_bitsize)
+  resource_b = bb.allocate(p_int_be.resource_bitsize)
+  b_dirich = bb.allocate(int(math.log(len(b),2)))
   # Performing operations to produce right hand side(hadamard trick subtraction)
-  ctrl = bb.allocate(1)
   p_int_be_controlled = p_int_be.controlled(CtrlSpec())
-  right_matrix_controlled = operand_5.controlled(CtrlSpec())
-  ctrl = bb.add(Hadamard(),q = ctrl)
-  ctrl = bb.add(ZGate(), q = ctrl)
-  ctrl, u, ancilla_u, resource_u = bb.add(p_int_be, ctrl = ctrl, system = u, ancilla = ancilla_u, resource = resource_u)
+  operand_5_controlled = operand_5.controlled(CtrlSpec())
+  ctrl = bb.allocate(1)
+  ctrl = bb.add(Hadamard(), q= ctrl)
+  b_dirich  = # perform u_prep algorithm
+  ctrl, b_dirich, ancilla_b, resource_b = bb.add(p_int_be_controlled,ctrl = ctrl,system = b_dirich,ancilla = ancilla_b, resource = resource_b)
   ctrl = bb.add(XGate(), q = ctrl)
-  ctrl, u_hat, ancilla_u_hat, resource_u_hat = bb.add(right_matrix_controlled, ctrl = ctrl, system = u_hat, ancilla = ancilla_u_hat, resource = resource_u_hat)
+  # Controlled u hat prep
+  phase_bitsize = 5
+  u_hat_preparer = StatePreparationViaRotations(
+    phase_bitsize=phase_bitsize,
+    state_coefficients=tuple(u_hat_unprepared),
+    control_bitsize=1)
+  phase_gradient = bb.add(PhaseGradientState(phase_bitsize))
+  ctrl, b_dirich, phase_gradient = bb.add(
+    u_hat_preparer, prepare_control=ctrl, target_state=b_dirich, phase_gradient=phase_gradient)
+  bb.add(PhaseGradientState(bitsize=phase_bitsize).adjoint(), phase_grad=phase_gradient)
+  # Continued hadamard. trick
+  ctrl, b_dirich, ancilla_b, resource_b = bb.add(operand_5_controlled,ctrl = ctrl,system = b_dirich,ancilla = ancilla_u_hat, resource = resource_u_hat)
+  ctrl = bb.add(XGate(), q = ctrl)
   ctrl = bb.add(Hadamard(),q = ctrl)
-  # Postselecting to get b_dirich"""
+  # Postselects registers
+  bb.add(IntEffect(1, 1), val = ctrl)
+  bb.add(IntEffect(0, p_int_be.ancilla_bitsize), val = ancilla_b)
+  bb.add(IntEffect(0, p_int_be.resource_bitsize), val = resource_b)
+  bb.add(IntEffect(0, operand_5.ancilla_bitsize), val = ancilla_u_hat)
+  bb.add(IntEffect(0, operand_5.resource_bitsize), val = resource_u_hat)
+  return qlsp_solver_prepared(None,L_dirich,b_dirich, bb)"""
 
 """Testing"""
