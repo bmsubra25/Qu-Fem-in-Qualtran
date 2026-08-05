@@ -14,7 +14,7 @@ Imports
 !pip install -U qualtran
 !pip install pennylane cirq
 
-from itertools import product
+from itertools import product as cartproduct
 import math
 import random
 from typing import *
@@ -53,7 +53,6 @@ from qualtran.bloqs.basic_gates import (
     CNOT,
     GlobalPhase,
     Hadamard,
-    Identity,
     IntEffect,
     OneEffect,
     OneState,
@@ -66,6 +65,7 @@ from qualtran.bloqs.basic_gates import (
     ZeroState,
     ZGate,
 )
+from qualtran.bloqs.basic_gates import Identity
 from qualtran.bloqs.block_encoding import (
     BlockEncoding,
     LinearCombination,
@@ -73,7 +73,6 @@ from qualtran.bloqs.block_encoding import (
     TensorProduct,
     Unitary,
 )
-from sympy import *
 from qualtran.bloqs.data_loading.qrom import QROM
 from qualtran.bloqs.qsp.generalized_qsp import GeneralizedQSP
 from qualtran.bloqs.reflections.prepare_identity import PrepareIdentity
@@ -89,7 +88,10 @@ from qualtran.drawing import (
     show_call_graph,
     show_counts_sigma,
 )
+from qualtran.bloqs.state_preparation import PrepareUniformSuperposition
+from sympy import diff
 import sympy as sp
+from sympy import degree
 
 """Position Operators/Q"""
 
@@ -115,7 +117,7 @@ def build_x(n):
     unitaries.append(Unitary(z_i(n,i)))
   return LinearCombination(tuple(unitaries),lambd = tuple(coeffs), lambd_bits = 3)
 
-class x_i(Bloq):
+class x_i(BlockEncoding):
   def __init__(self, d, n, i):
     self.d = d
     self.n = n
@@ -123,7 +125,7 @@ class x_i(Bloq):
     self.x = build_x(n)
   @property
   def signature(self):
-    registers = [Register("system", QAny(self.n*d))]
+    registers = [Register("system", QAny(self.n*self.d))]
     registers.append(Register("ancilla", QAny(self.x.ancilla_bitsize) ))
     registers.append(Register("resource", QAny(self.x.resource_bitsize)))
     return Signature(registers)
@@ -312,12 +314,13 @@ class a_jk_block_encoding(BlockEncoding):
     return {"system": system, "ancilla": ancilla}
 
 class log_numel_projector(BlockEncoding):
-  def __init__(self, numel, n_bits):
-    self.numel = numel
-    self.n_bits = n_bits
+  def __init__(self, numnp_bits, numel):
+    self.numnp_bits = numnp_bits
+    marker_table = [0 if i < numel else 1 for i in range(2 ** numnp_bits)]
+    self.table = QROM([np.array(marker_table)],(numnp_bits,),(1,))
   @property
   def signature(self):
-    return Signature([Register("system", QUInt(self.n_bits)),Register("ancilla", QBit())])
+    return Signature([Register("system",QAny(self.numnp_bits)),Register("ancilla",QBit())])
   @property
   def alpha(self):
     return 1
@@ -335,38 +338,67 @@ class log_numel_projector(BlockEncoding):
     return BlackBoxPrepare(prepare = PrepareIdentity.from_bitsizes([1]))
   @property
   def system_bitsize(self):
-    return self.n_bits
-  def build_composite_bloq(self, bb, *, el, flag):
-    numel_reg = bb.allocate(dtype = QUInt(self.n_bits))
-    numel_reg_bits = bb.split(numel_reg)
-    for index in range(self.n_bits):
-      if (self.numel >> index) & 1:
-        numel_reg_bits[self.n_bits - index - 1] = bb.add(XGate(), q = numel_reg_bits[self.n_bits - index - 1])
-    numel_reg = bb.join(numel_reg_bits, dtype = QUInt(self.n_bits))
-    numel_reg, el , flag = bb.add(GreaterThan(a_bitsize = self.n_bits, b_bitsize = self.n_bits), a = numel_reg, b = el, target = flag)
-    numel_reg_bits = bb.split(numel_reg)
-    for index in range(self.n_bits):
-      if (self.numel >> index) & 1:
-        numel_reg_bits[self.n_bits - index - 1] = bb.add(XGate(), q = numel_reg_bits[self.n_bits - index - 1])
-    numel_reg = bb.join(numel_reg_bits)
-    bb.free(numel_reg)
-    return {"el": el, "flag": flag}
+    return self.numnp_bits
+  def build_composite_bloq(self,bb, *, system, ancilla):
+    system, ancilla = bb.add(self.table, selection = system, target0_ = ancilla)
+    return {"system": system, "ancilla": ancilla}
 
-"""Finite Element Array Assembly"""
+"""Quadrature Point Position Operators"""
 
-def generate_x_gl(x_l, numel, n_bits):
+def generate_x_l_i_el(x_l_i, numel, n_bits, d):
   h = 1/numel
-  coeff_1 = h*(x_l+1)/2
-  coeff_2 = h*(2**n_bits-1)
-  inner = LinearCombination(block_encodings = (Identity(n_bits), build_x(n_bits)), lambd = (coeff_1,coeff_2),lambd_bits = 4)
-  return Product((log_numel_projector(numel, n_bits), inner))
+  coeff_1 = h * (x_l_i+ 1)/2
+  coeff_2 = h
+  inner = LinearCombination(block_encodings = (Unitary(Identity(n_bits)), build_x(n_bits)), lambd = (coeff_1,coeff_2),lambd_bits = 4)
+  return BlockEncodingProduct((log_numel_projector(n_bits,numel), inner))
+# ith coordinate of the lth gauss point for a certain element varies between elements
+class gauss_point_ith_coordinate(BlockEncoding):
+  def __init__(self, x_l_i, numel, n_bits, d, i):
+    encodings = [log_numel_projector(numel = numel,numnp_bits = n_bits)] * d
+    encodings[d - i - 1] = generate_x_l_i_el(x_l_i = x_l_i, numel = numel, n_bits = n_bits, d = d)
+    self.operation = TensorProduct(block_encodings = tuple(encodings))
+  @property
+  def signature(self):
+    return self.operation.signature
+  @property
+  def alpha(self):
+    return self.operation.alpha
+  @property
+  def ancilla_bitsize(self):
+    return self.operation.ancilla_bitsize
+  @property
+  def epsilon(self):
+    return self.operation.epsilon
+  @property
+  def resource_bitsize(self):
+    return self.operation.resource_bitsize
+  @property
+  def signal_state(self):
+    return self.operation.signal_state
+  @property
+  def system_bitsize(self):
+    return self.operation.system_bitsize
+  def build_composite_bloq(self, bb, *, system, ancilla, resource):
+    system, ancilla, resource = bb.add(self.operation, system = system, ancilla = ancilla, resource = resource)
+    return {"system": system, "ancilla": ancilla, "resource":resource}
 
-def generate_gauss_tuples(G, numel, el):
+"""Gauss Tuples and Quadrature Coefficients"""
+
+def generate_gauss_tuples_plain(G, numel, d):
+  one_dimensional_points = []
+  x = sp.symbols("x")
+  poly = sp.Poly(legendre(G,x))
+  poly_deriv = diff(poly, x)
+  for x_k in poly.nroots():
+    one_dimensional_points.append(x_k)
+  return list(cartproduct(one_dimensional_points, repeat = d))
+
+def generate_gauss_tuples_1D(G, numel, el, d):
   gauss_tuples = []
   x = sp.symbols("x")
-  poly = legendre(G,x)
+  poly = sp.Poly(legendre(G,x))
   poly_deriv = diff(poly, x)
-  h = 1/numel
+  h = 1/(numel)
   for x_k in poly.nroots():
     w_k = 2 / (((1 - x_k**2))*(poly_deriv(x_k)**2))
     x_k_el = h* (x_k + 1)/2 + h*el
@@ -374,55 +406,82 @@ def generate_gauss_tuples(G, numel, el):
     gauss_tuples.append((w_k_el, x_k_el))
   return gauss_tuples
 
-def generate_c_ljk_array(j,k, nodal_basis_map, gauss_tuples):
+def generate_gauss_tuples(G, numel, d):
+  one_dimensional_points = generate_gauss_tuples_1D(G, numel, el, d)
+  higher_d_tuples = []
+  for tup in cartproduct(one_dimensional_points, repeat = d):
+    whole = []
+    weight = 1
+    for index in tup:
+      whole.append(index[1])
+      weight = weight * index[0]
+    whole.append(weight)
+    higher_d_tuples.append(tuple(whole))
+  return higher_d_tuples
+
+def generate_c_jk_array(j,k, nodal_basis_map, gauss_tuples):
   coeff_array = []
   for i in range(len(gauss_tuples)):
-    weight, point = gauss_tuples[i]
-    coeff_array.append(weight * nodal_basis_map[j][k](point))
+    point = list(gauss_tuples[i][0:len(gauss_tuples[i])-1])
+    weight = gauss_tuples[i][-1]
+    coeff_array.append(weight * nodal_basis_map[j][k](*point))
   return coeff_array
 
-def assemble_fem_array(nodal_basis_map, G, nen, numel, numnp, IX, operators):
-  gauss_tuples = generate_gauss_tuples(G, numel, el = 0)
-  nen_bits = int(math.log(nen,2))
-  numel_bits = int(math.log(numel,2))
-  numnp_bits = int(math.log(numnp,2))
-  # list for storing bes
-  bes = []
-  for j,k in combinations(list(range(nen)),2):
-    a_j = a_j_block_encoding(nen, numel, numnp, nen_bits, numel_bits, numnp_bits ,IX, j)
-    a_k = a_j_block_encoding(nen, numel, numnp, nen_bits, numel_bits, numnp_bits ,IX, k)
-    lcu = LinearCombination(block_encodings = tuple(operators),lambd = tuple(generate_c_ljk_array(j,k,nodal_basis_map,gauss_tuples)), lambd_bits = 5)
-    bes.append(BlockEncodingProduct(a_j,lcu,AdjointBlockEncoding(a_k)))
-  coeffs = [1.0] * len(bes)
-  return LinearCombination(block_encodings = tuple(bes), lambd = tuple(coeffs), lambd_bits = 1)
-
-"""Force Vector Assembly"""
-
-def generate_c_lj_array(j, nodal_functions, gauss_tuples):
+def generate_c_j_array(j, nodal_functions, gauss_tuples):
   coeff_array = []
   for i in range(len(gauss_tuples)):
-    weight, point = gauss_tuples[i]
-    coeff_array.append(weight * nodal_functions[j](point))
+    point = list(gauss_tuples[i][0:len(gauss_tuples[i])-1])
+    weight = gauss_tuples[i][-1]
+    coeff_array.append(weight * nodal_functions[j](*point))
   return coeff_array
 
-def generate_force_diag(nodal_functions, G, nen, numel, numnp, IX, operators):
-  gauss_tuples = generate_gauss_tuples(G, numel)
-  nen_bits = int(math.log(nen,2))
-  numel_bits = int(math.log(numel,2))
-  numnp_bits = int(math.log(numnp,2))
-  bes = []
+"""Function Operator LCU"""
+
+def generate_function_operator_lcu_diag(G, nen, numel, numnp, numnp_bits, IX, d, j, nodal_functions, source_function):
+  tuples = generate_gauss_tuples_plain(G, numel, d)
+  c_j_array = generate_c_j_array(j, nodal_functions, tuples)
+  function_operators = []
+  for x_l in tuples:
+    commuting_operators = []
+    for i in range(d):
+      # XG,(i)ℓi
+      commuting_operators.append(gauss_point_ith_coordinate(x_l[i], numel, numnp_bits, d, i))
+    function_operators.append(MQET(commuting_operators, 5, d,source_function, source_function.gens))
+  return LinearCombination(block_encodings = tuple(function_operators), lambd = tuple(c_j_array), lambd_bits = 5)
+
+def generate_function_operator_lcu_array(G, nen, numel, numnp, numnp_bits, IX, d, j, k, nodal_basis_map, source_function):
+  tuples = generate_gauss_tuples_plain(G, numel, d)
+  c_jk_array = generate_c_jk_array(j,k, nodal_basis_map, tuples)
+  function_operators = []
+  for x_l in tuples:
+    commuting_operators = []
+    for i in range(d):
+      # XG,(i)ℓi
+      commuting_operators.append(gauss_point_ith_coordinate(x_l[i], numel, numnp_bits, d, i))
+    function_operators.append(MQET(commuting_operators, 5, d,source_function, source_function.gens))
+  return LinearCombination(block_encodings = tuple(function_operators), lambd = tuple(c_jk_array), lambd_bits = 5)
+
+"""Finite Element Arrays/Vectors Assembly"""
+
+def construct_finite_element_array(G, nen, numel, numnp, nen_bits, numel_bits, numnp_bits, IX, d, nodal_basis_map, source_function):
+  block_encodings = []
+  for pair in cartproduct(range(nen),repeat = 2):
+    j, k = pair
+    a_j = a_j_block_encoding(nen, numel, numnp, nen_bits, numel_bits, numnp_bits, IX, j)
+    a_k_adj = AdjointBlockEncoding(a_j_block_encoding(nen, numel, numnp, nen_bits, numel_bits, numnp_bits, IX, k))
+    sum_functions = generate_function_operator_lcu_array(G, nen, numel, numnp, numnp_bits, IX, d, j, k, nodal_basis_map, source_function)
+    block_encodings.append(BlockEncodingProduct((a_j, sum_functions, a_k_adj)))
+  coeffs = [1.0 for _ in range(len(block_encodings))]
+  return LinearCombination(block_encodings = tuple(block_encodings),lambd = tuple(coeffs),lambd_bits = 5)
+
+def construct_source_vector_diag(G, nen, numel, numnp, nen_bits, numel_bits, numnp_bits, IX, d, nodal_functions, source_function):
+  block_encodings = []
   for j in range(nen):
-    a_j = a_j_block_encoding(nen, numel, numnp, nen_bits, numel_bits, numnp_bits ,IX, j)
-    lcu = LinearCombination(block_encodings = tuple(operators),lambd = tuple(generate_c_lj_array(j,nodal_functions,gauss_tuples)), lambd_bits = 5)
-    bes.append(BlockEncodingProduct(a_j,lcu,AdjointBlockEncoding(a_j)))
-  coeffs = [1.0] * len(bes)
-  return LinearCombination(block_encodings = tuple(bes), lambd = tuple(coeffs), lambd_bits = 1)
-
-def prep_f(nodal_functions, G, nen, numel, numnp, IX):
-
-
-
-  return None
+    a_j = a_j_block_encoding(nen, numel, numnp, nen_bits, numel_bits, numnp_bits, IX, j)
+    sum_functions = generate_function_operator_lcu_diag(G, nen, numel, numnp, numnp_bits, IX, d, j, nodal_functions, source_function)
+    block_encodings.append(BlockEncodingProduct((a_j, sum_functions, AdjointBlockEncoding(a_j))))
+  coeffs = [1.0 for _ in range(len(block_encodings))]
+  return LinearCombination(block_encodings = tuple(block_encodings),lambd = tuple(coeffs),lambd_bits = 5)
 
 """Boundary Conditions Operators"""
 
@@ -454,28 +513,33 @@ class u_b(BlockEncoding):
   def build_composite_bloq(self,bb, *, system, ancilla):
     system, ancilla = bb.add(self.table, selection = system, target0_ = ancilla)
     return {"system": system, "ancilla": ancilla}
-"""def enforce_boundary_conditions(bb, L, u, b, u_hat_unprepared, marker_table, numnp_bits):
+def enforce_boundary_conditions(bb, L, u_hat_unprepared, marker_table, numnp_bits, source_vector_diag):
   # Creating matrices for multiplictation
   operand_1 = BlockEncodingProduct(tuple([u_b(numnp_bits,marker_table),L,u_b(numnp_bits,marker_table)]))
-  operand_2 = LinearCombination(block_encodings = (Identity(numnp_bits),u_b(numnp_bits,marker_table)),lambd = (1.0,-1.0),lambd_bits = 1)
+  operand_2 = LinearCombination(block_encodings = (Unitary(Identity(numnp_bits)),u_b(numnp_bits,marker_table)),lambd = (1.0,-1.0),lambd_bits = 1)
   L_dirich = LinearCombination(block_encodings = (operand_1,operand_2),lambd = (1.0,1.0),lambd_bits = 1)
-  operand_3 = LinearCombination(block_encodings = (L, Identity(numnp_bits)),lambd = (1.0,-1.0),lambd_bits = 1)
-  operand_4 = LinearCombination(block_encodings = (Identity(numnp_bits),u_b(numnp_bits,marker_table)),lambd = (1.0,-1.0),lambd_bits = 1)
+  operand_3 = LinearCombination(block_encodings = (L, Unitary(Identity(numnp_bits))),lambd = (1.0,-1.0),lambd_bits = 1)
+  operand_4 = LinearCombination(block_encodings = (Unitary(Identity(numnp_bits)),u_b(numnp_bits,marker_table)),lambd = (1.0,-1.0),lambd_bits = 1)
   operand_5 = BlockEncodingProduct(tuple([operand_3, operand_4]))
   p_int_be = u_b(numnp_bits,marker_table)
   # preparing vectors and ancillas
   ancilla_u_hat = bb.allocate(operand_5.ancilla_bitsize)
   resource_u_hat = bb.allocate(operand_5.resource_bitsize)
   ancilla_b = bb.allocate(p_int_be.ancilla_bitsize)
-  resource_b = bb.allocate(p_int_be.resource_bitsize)
-  b_dirich = bb.allocate(int(math.log(len(b),2)))
+  ancilla_diag = bb.allocate(source_vector_diag.ancilla_bitsize)
+  resource_diag = bb.allocate(source_vector_diag.resource_bitsize)
+  b_dirich = bb.allocate(numnp_bits)
   # Performing operations to produce right hand side(hadamard trick subtraction)
   p_int_be_controlled = p_int_be.controlled(CtrlSpec())
   operand_5_controlled = operand_5.controlled(CtrlSpec())
   ctrl = bb.allocate(1)
   ctrl = bb.add(Hadamard(), q= ctrl)
-  b_dirich  = # perform u_prep algorithm
-  ctrl, b_dirich, ancilla_b, resource_b = bb.add(p_int_be_controlled,ctrl = ctrl,system = b_dirich,ancilla = ancilla_b, resource = resource_b)
+  # Preparing b vector
+  prep_uniform_controlled = PrepareUniformSuperposition(n=2**source_vector_diag.system_bitsize).controlled(CtrlSpec())
+  diag_controlled = source_vector_diag.controlled(CtrlSpec())
+  ctrl, b_dirich  = bb.add(prep_uniform_controlled, ctrl = ctrl, target = b_dirich )
+  ctrl, b_dirich, ancilla_diag, resource_diag = bb.add(diag_controlled, ctrl = ctrl, system = b_dirich, ancilla = ancilla_diag, resource = resource_diag)
+  ctrl, b_dirich, ancilla_b = bb.add(p_int_be_controlled,ctrl = ctrl,system = b_dirich,ancilla = ancilla_b)
   ctrl = bb.add(XGate(), q = ctrl)
   # Controlled u hat prep
   phase_bitsize = 5
@@ -488,15 +552,15 @@ class u_b(BlockEncoding):
     u_hat_preparer, prepare_control=ctrl, target_state=b_dirich, phase_gradient=phase_gradient)
   bb.add(PhaseGradientState(bitsize=phase_bitsize).adjoint(), phase_grad=phase_gradient)
   # Continued hadamard. trick
-  ctrl, b_dirich, ancilla_b, resource_b = bb.add(operand_5_controlled,ctrl = ctrl,system = b_dirich,ancilla = ancilla_u_hat, resource = resource_u_hat)
-  ctrl = bb.add(XGate(), q = ctrl)
+  ctrl, b_dirich, ancilla_u_hat, resource_u_hat = bb.add(operand_5_controlled,ctrl = ctrl,system = b_dirich,ancilla = ancilla_u_hat, resource = resource_u_hat)
   ctrl = bb.add(Hadamard(),q = ctrl)
   # Postselects registers
   bb.add(IntEffect(1, 1), val = ctrl)
   bb.add(IntEffect(0, p_int_be.ancilla_bitsize), val = ancilla_b)
-  bb.add(IntEffect(0, p_int_be.resource_bitsize), val = resource_b)
+  bb.add(IntEffect(0, source_vector_diag.ancilla_bitsize), val = ancilla_diag)
+  bb.add(IntEffect(0, source_vector_diag.resource_bitsize), val = resource_diag)
   bb.add(IntEffect(0, operand_5.ancilla_bitsize), val = ancilla_u_hat)
   bb.add(IntEffect(0, operand_5.resource_bitsize), val = resource_u_hat)
-  return qlsp_solver_prepared(None,L_dirich,b_dirich, bb)"""
+  return qlsp_solver_prepared(None,L_dirich,b_dirich, bb)
 
 """Testing"""
