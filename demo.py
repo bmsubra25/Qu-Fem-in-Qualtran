@@ -23,7 +23,7 @@ from itertools import product as cartproduct
 import math
 import random
 from typing import *
-import qu_fem_in_qualtran
+from qu_fem_in_qualtran.qu_fem import construct_source_vector_diag
 from qu_fem_in_qualtran.mqet import MQET
 from qu_fem_in_qualtran.quantum_linear_systems import qlsp_solver_prepared
 from qu_fem_in_qualtran.quantum_linear_systems import prep_vector
@@ -106,15 +106,21 @@ def generate_vars(d):
   for i in range(d):
     string += f"x_{i} "
   return sp.symbols(string)
-def generate_lagrange_basis(nen, j):
-  # nen = (p+1)^d
-  vars = generate_vars(nen)
-  poly = 1
-  for m in range(d):
-    if m != j:
-      poly = (vars[] - m /)
 
-  return sp.Poly(poly, vars)
+def generate_lagrange_basis_1D(p, v, index):
+  poly = 1
+  for m in range(p+1):
+    if m != index:
+      poly = poly * (v -  m/p) / (index / p - m/p)
+  return sp.Poly(poly, v)
+
+def generate_lagrange_basis(p, indices):
+  vars = generate_vars(len(indices))
+  func = 1
+  for i in range(len(indices)):
+    func = func * generate_lagrange_basis_1D(p, vars[i], indices[i])
+  return sp.Poly(func, vars)
+generate_lagrange_basis(2, [0,1])
 
 """Mesh Creation/Mesh Parameter Setting"""
 
@@ -138,5 +144,31 @@ mesh = skfem.MeshQuad.init_tensor(*space)
 numel = mesh.t.shape[1]
 numel_bits = math.ceil(math.log(numel, 2))
 IX = mesh.t
+reference = mesh.init_refdom()
 
 """Function Definitions"""
+
+nodal_reference_functions = []
+for col in range(nen):
+  coords = []
+  for row in range(len(list(reference.p))):
+    coords.append(reference.p[row][col])
+  nodal_reference_functions.append(generate_lagrange_basis(int(math.log(nen, 2)-1), coords))
+# int(dN_i * dN_j)
+nodal_basis_map_k = []
+# int(N_i * N_j)
+nodal_basis_map_m = []
+
+for j in range(len(nodal_reference_functions)):
+  for k in range(len(nodal_reference_functions)):
+    nodal_basis_map_k.append(diff(nodal_reference_functions[j])*diff(nodal_reference_functions[k]))
+
+for j in range(len(nodal_reference_functions)):
+  for k in range(len(nodal_reference_functions)):
+    nodal_basis_map_m.append(nodal_reference_functions[j]*nodal_reference_functions[k])
+
+"""Poisson's Problem"""
+
+x = sp.symbols("x")
+source_function = sp.poly(x ** 2,x)
+construct_source_vector_diag(5, nen, numel, numnp, nen_bits, numel_bits, numnp_bits, IX, d, nodal_reference_functions, source_function)
