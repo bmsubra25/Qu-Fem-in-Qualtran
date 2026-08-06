@@ -431,7 +431,7 @@ def generate_c_j_array(j, nodal_functions, gauss_tuples):
 
 """Function Operator LCU"""
 
-def generate_function_operator_lcu_diag(G, nen, numel, numnp, numnp_bits, IX, d, j, nodal_functions, source_function):
+def generate_function_operator_lcu_diag(G, nen, numel, numnp, numnp_bits, IX, d, j, nodal_functions, function):
   tuples = generate_gauss_tuples_plain(G, numel, d)
   c_j_array = generate_c_j_array(j, nodal_functions, tuples)
   function_operators = []
@@ -440,7 +440,7 @@ def generate_function_operator_lcu_diag(G, nen, numel, numnp, numnp_bits, IX, d,
     for i in range(d):
       # XG,(i)ℓi
       commuting_operators.append(gauss_point_ith_coordinate(x_l[i], numel, numnp_bits, d, i))
-    function_operators.append(MQET(commuting_operators, 5, d,source_function, source_function.gens))
+    function_operators.append(MQET(commuting_operators, 5, d,function, function.gens))
   return LinearCombination(block_encodings = tuple(function_operators), lambd = tuple(c_j_array), lambd_bits = 5)
 
 def generate_function_operator_lcu_array(G, nen, numel, numnp, numnp_bits, IX, d, j, k, nodal_basis_map, source_function):
