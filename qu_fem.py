@@ -457,13 +457,13 @@ def generate_function_operator_lcu_array(G, nen, numel, numnp, numnp_bits, IX, d
 
 """Finite Element Arrays/Vectors Assembly"""
 
-def construct_finite_element_array(G, nen, numel, numnp, nen_bits, numel_bits, numnp_bits, IX, d, nodal_basis_map, source_function):
+def construct_finite_element_array(G, nen, numel, numnp, nen_bits, numel_bits, numnp_bits, IX, d, nodal_basis_map, function):
   block_encodings = []
   for pair in cartproduct(range(nen),repeat = 2):
     j, k = pair
     a_j = a_j_block_encoding(nen, numel, numnp, nen_bits, numel_bits, numnp_bits, IX, j)
     a_k_adj = AdjointBlockEncoding(a_j_block_encoding(nen, numel, numnp, nen_bits, numel_bits, numnp_bits, IX, k))
-    sum_functions = generate_function_operator_lcu_array(G, nen, numel, numnp, numnp_bits, IX, d, j, k, nodal_basis_map, source_function)
+    sum_functions = generate_function_operator_lcu_array(G, nen, numel, numnp, numnp_bits, IX, d, j, k, nodal_basis_map, function)
     block_encodings.append(BlockEncodingProduct((a_j, sum_functions, a_k_adj)))
   coeffs = [1.0 for _ in range(len(block_encodings))]
   return LinearCombination(block_encodings = tuple(block_encodings),lambd = tuple(coeffs),lambd_bits = 5)
