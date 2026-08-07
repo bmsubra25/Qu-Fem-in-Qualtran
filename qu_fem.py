@@ -310,8 +310,7 @@ class a_jk_block_encoding(BlockEncoding):
 class log_numel_projector(BlockEncoding):
   def __init__(self, numnp_bits, numel):
     self.numnp_bits = numnp_bits
-    marker_table = [0 if i < numel else 1 for i in range(2 ** numnp_bits)]
-    self.table = QROM([np.array(marker_table)],(numnp_bits,),(1,))
+    self.numel = numel
   @property
   def signature(self):
     return Signature([Register("system",QAny(self.numnp_bits)),Register("ancilla",QBit())])
@@ -334,7 +333,20 @@ class log_numel_projector(BlockEncoding):
   def system_bitsize(self):
     return self.numnp_bits
   def build_composite_bloq(self,bb, *, system, ancilla):
-    system, ancilla = bb.add(self.table, selection = system, target0_ = ancilla)
+    numel_reg = bb.allocate(dtype = QUInt(self.numnp_bits))
+    numel_reg_bits = bb.split(numel_reg)
+    for index in range(self.numnp_bits):
+      if (self.numel >> index) & 1:
+        numel_reg_bits[self.numnp_bits - index - 1] = bb.add(XGate(), q = numel_reg_bits[self.numnp_bits - index - 1])
+    numel_reg = bb.join(numel_reg_bits, dtype = QUInt(self.numnp_bits))
+    numel_reg, system , ancilla = bb.add(GreaterThan(a_bitsize = self.numnp_bits, b_bitsize = self.numnp_bits), a = numel_reg, b = system, target = ancilla)
+    numel_reg_bits = bb.split(numel_reg)
+    for index in range(self.numnp_bits):
+      if (self.numel >> index) & 1:
+        numel_reg_bits[self.numnp_bits - index - 1] = bb.add(XGate(), q = numel_reg_bits[self.numnp_bits - index - 1])
+    numel_reg = bb.join(numel_reg_bits)
+    ancilla = bb.add(XGate(),q = ancilla)
+    bb.free(numel_reg)
     return {"system": system, "ancilla": ancilla}
 
 """Quadrature Point Position Operators"""
@@ -443,7 +455,7 @@ def generate_function_operator_lcu_diag(G, nen, numel, numnp, numnp_bits, IX, d,
     function_operators.append(MQET(commuting_operators, 5, d,function, function.gens))
   return LinearCombination(block_encodings = tuple(function_operators), lambd = tuple(c_j_array), lambd_bits = 5)
 
-def generate_function_operator_lcu_array(G, nen, numel, numnp, numnp_bits, IX, d, j, k, nodal_basis_map, source_function):
+def generate_function_operator_lcu_array(G, nen, numel, numnp, numnp_bits, IX, d, j, k, nodal_basis_map, function):
   tuples = generate_gauss_tuples_plain(G, numel, d)
   c_jk_array = generate_c_jk_array(j,k, nodal_basis_map, tuples)
   function_operators = []
@@ -452,7 +464,7 @@ def generate_function_operator_lcu_array(G, nen, numel, numnp, numnp_bits, IX, d
     for i in range(d):
       # XG,(i)ℓi
       commuting_operators.append(gauss_point_ith_coordinate(x_l[i], numel, numnp_bits, d, i))
-    function_operators.append(MQET(commuting_operators, 5, d,source_function, source_function.gens))
+    function_operators.append(MQET(commuting_operators, 5, d,function, function.gens))
   return LinearCombination(block_encodings = tuple(function_operators), lambd = tuple(c_jk_array), lambd_bits = 5)
 
 """Finite Element Arrays/Vectors Assembly"""
@@ -507,6 +519,7 @@ class u_b(BlockEncoding):
   def build_composite_bloq(self,bb, *, system, ancilla):
     system, ancilla = bb.add(self.table, selection = system, target0_ = ancilla)
     return {"system": system, "ancilla": ancilla}
+
 def enforce_boundary_conditions(bb, L, u_hat_unprepared, marker_table, numnp_bits, source_vector_diag):
   # Creating matrices for multiplictation
   operand_1 = BlockEncodingProduct(tuple([u_b(numnp_bits,marker_table),L,u_b(numnp_bits,marker_table)]))
